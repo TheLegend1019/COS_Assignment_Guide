@@ -853,3 +853,425 @@ int main(int argc, char *argv[]) {
 ## License
 
 MIT — feel free to adapt for coursework submissions where permitted by your institution’s policy.
+
+
+#Code
+
+qt/LibraryQt.pro
+TEMPLATE = app
+QT += widgets
+CONFIG += c++17 console
+CONFIG -= app_bundle
+
+SOURCES += \
+    app/main.cpp \
+    app/MainWindow.cpp \
+    app/ItemModel.cpp \
+    app/LibraryItem.cpp \
+    app/Book.cpp \
+    app/Magazine.cpp \
+    libraryutils/LibraryUtils.cpp
+
+HEADERS += \
+    app/MainWindow.h \
+    app/ItemModel.h \
+    app/Storage.h \
+    app/LibraryItem.h \
+    app/Book.h \
+    app/Magazine.h \
+    libraryutils/LibraryUtils.h
+app/
+qt/app/Storage.h
+#pragma once
+#include <vector>
+#include <algorithm>
+
+template<typename T>
+class Storage {
+    std::vector<T> data;
+public:
+    void add(const T& v) { data.push_back(v); }
+
+    template<typename Pred>
+    void removeIf(Pred p) { data.erase(std::remove_if(data.begin(), data.end(), p), data.end()); }
+
+    const std::vector<T>& all() const { return data; }
+    std::vector<T>& all() { return data; }
+
+    template<typename Pred>
+    T* findIf(Pred pred) {
+        auto it = std::find_if(data.begin(), data.end(), pred);
+        return it==data.end() ? nullptr : &*it;
+    }
+
+    size_t size() const { return data.size(); }
+};
+qt/app/LibraryItem.h
+#pragma once
+#include <string>
+#include <iostream>
+
+class LibraryItem {
+protected:
+    std::string title;
+    std::string author;
+    int id{};
+    bool isBorrowed{false};
+
+public:
+    LibraryItem() = default;
+    LibraryItem(std::string t, std::string a, int i, bool b=false)
+        : title(std::move(t)), author(std::move(a)), id(i), isBorrowed(b) {}
+
+    virtual ~LibraryItem() = default;
+
+    // Encapsulation getters/setters
+    const std::string& getTitle()  const { return title; }
+    const std::string& getAuthor() const { return author; }
+    int  getId() const { return id; }
+    bool getIsBorrowed() const { return isBorrowed; }
+
+    void setTitle(const std::string& t)  { title = t; }
+    void setAuthor(const std::string& a) { author = a; }
+    void setId(int i)                    { id = i; }
+    void setIsBorrowed(bool b)           { isBorrowed = b; }
+
+    // Polymorphic API
+    virtual std::string type() const = 0;
+    virtual void displayInfo(std::ostream& os) const = 0;
+
+    // CSV helpers
+    static std::string escape(const std::string& s);
+    static std::string quote(const std::string& s);
+};
+qt/app/LibraryItem.cpp
+#include "LibraryItem.h"
+
+std::string LibraryItem::escape(const std::string& s) {
+    std::string out; out.reserve(s.size()+8);
+    for (char c : s) {
+        if (c == '"') out += "\"\"";
+        else out += c;
+    }
+    return out;
+}
+
+std::string LibraryItem::quote(const std::string& s) {
+    return "\"" + escape(s) + "\"";
+}
+qt/app/Book.h
+#pragma once
+#include "LibraryItem.h"
+
+class Book : public LibraryItem {
+    std::string genre;
+public:
+    Book() = default;
+    Book(std::string t, std::string a, int i, bool b, std::string g)
+        : LibraryItem(std::move(t), std::move(a), i, b), genre(std::move(g)) {}
+
+    const std::string& getGenre() const { return genre; }
+    void setGenre(const std::string& g) { genre = g; }
+
+    std::string type() const override { return "Book"; }
+    void displayInfo(std::ostream& os) const override;
+};
+qt/app/Book.cpp
+#include "Book.h"
+
+void Book::displayInfo(std::ostream& os) const {
+    os << "[Book] #" << id << "  " << title << " — " << author
+       << " | Genre: " << genre
+       << " | " << (isBorrowed ? "Borrowed" : "Available");
+}
+qt/app/Magazine.h
+#pragma once
+#include "LibraryItem.h"
+
+class Magazine : public LibraryItem {
+    int issueNumber{};
+public:
+    Magazine() = default;
+    Magazine(std::string t, std::string a, int i, bool b, int issue)
+        : LibraryItem(std::move(t), std::move(a), i, b), issueNumber(issue) {}
+
+    int  getIssueNumber() const { return issueNumber; }
+    void setIssueNumber(int n)  { issueNumber = n; }
+
+    std::string type() const override { return "Magazine"; }
+    void displayInfo(std::ostream& os) const override;
+};
+qt/app/Magazine.cpp
+#include "Magazine.h"
+
+void Magazine::displayInfo(std::ostream& os) const {
+    os << "[Magazine] #" << id << "  " << title << " — " << author
+       << " | Issue: " << issueNumber
+       << " | " << (isBorrowed ? "Borrowed" : "Available");
+}
+qt/app/ItemModel.h
+#pragma once
+#include <QAbstractListModel>
+#include <QList>
+#include "LibraryItem.h"
+
+class ItemModel : public QAbstractListModel {
+    Q_OBJECT
+    QList<LibraryItem*> m_items;
+public:
+    explicit ItemModel(QObject* parent=nullptr) : QAbstractListModel(parent) {}
+
+    int rowCount(const QModelIndex& parent = {}) const override {
+        Q_UNUSED(parent);
+        return m_items.size();
+    }
+
+    QVariant data(const QModelIndex& idx, int role) const override {
+        if (!idx.isValid() || idx.row()<0 || idx.row()>=m_items.size()) return {};
+        auto* p = m_items[idx.row()];
+        if (role==Qt::DisplayRole) {
+            return QString::fromStdString(
+                p->type() + " #" + std::to_string(p->getId()) + " - " + p->getTitle()
+            );
+        }
+        return {};
+    }
+
+    void setItems(const QList<LibraryItem*>& items) {
+        beginResetModel(); m_items = items; endResetModel();
+    }
+
+    LibraryItem* at(int row) const {
+        return row>=0 && row<m_items.size()? m_items[row] : nullptr;
+    }
+
+    QList<LibraryItem*>& items() { return m_items; }
+};
+qt/app/ItemModel.cpp
+#include "ItemModel.h"
+// All logic is inline in the header for brevity.
+// This cpp exists to satisfy the .pro SOURCES list (can be empty).
+qt/app/MainWindow.h
+#pragma once
+#include <QMainWindow>
+#include <QList>
+#include <QSortFilterProxyModel>
+#include "ItemModel.h"
+#include "LibraryItem.h"
+
+class QLineEdit; class QPushButton; class QComboBox; class QListView; class QSpinBox;
+
+class MainWindow : public QMainWindow {
+    Q_OBJECT
+    QListView* listView{};
+    QLineEdit* searchEdit{};
+    QLineEdit* titleEdit{}; QLineEdit* authorEdit{};
+    QSpinBox* idSpin{}; QComboBox* typeCombo{}; QLineEdit* genreEdit{}; QSpinBox* issueSpin{};
+    QPushButton* addBtn{}; QPushButton* borrowBtn{}; QPushButton* returnBtn{};
+    ItemModel* model{};
+    QSortFilterProxyModel* proxy{};
+    QList<LibraryItem*> items;
+    QString dataPath{"library_data.txt"};
+
+    void refreshSave();
+    void toggleInputs();
+public:
+    explicit MainWindow(QWidget* parent=nullptr);
+    ~MainWindow();
+};
+qt/app/MainWindow.cpp
+#include "MainWindow.h"
+#include <QtWidgets>
+#include "../libraryutils/LibraryUtils.h"
+#include "Book.h"
+#include "Magazine.h"
+
+MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+    auto* central = new QWidget(this);
+    auto* layout = new QVBoxLayout(central);
+
+    // Search
+    auto* searchRow = new QHBoxLayout;
+    searchEdit = new QLineEdit; searchEdit->setPlaceholderText("Search title/author...");
+    searchRow->addWidget(new QLabel("Search:")); searchRow->addWidget(searchEdit);
+
+    // Model/View
+    model = new ItemModel(this);
+    proxy = new QSortFilterProxyModel(this);
+    proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
+    proxy->setSourceModel(model);
+    proxy->setFilterRole(Qt::DisplayRole);
+    listView = new QListView; listView->setModel(proxy);
+
+    // Inputs
+    auto* form = new QFormLayout;
+    typeCombo = new QComboBox; typeCombo->addItems({"Book","Magazine"});
+    titleEdit = new QLineEdit; authorEdit = new QLineEdit;
+    idSpin = new QSpinBox; idSpin->setRange(1, 100000000);
+    genreEdit = new QLineEdit; issueSpin = new QSpinBox; issueSpin->setRange(1, 100000);
+    form->addRow("Type:", typeCombo);
+    form->addRow("Title:", titleEdit);
+    form->addRow("Author:", authorEdit);
+    form->addRow("ID:", idSpin);
+    form->addRow("Genre (Book):", genreEdit);
+    form->addRow("Issue (Magazine):", issueSpin);
+
+    addBtn = new QPushButton("Add");
+    borrowBtn = new QPushButton("Borrow");
+    returnBtn = new QPushButton("Return");
+    auto* btnRow = new QHBoxLayout;
+    btnRow->addWidget(addBtn); btnRow->addWidget(borrowBtn); btnRow->addWidget(returnBtn);
+
+    layout->addLayout(searchRow);
+    layout->addWidget(listView);
+    layout->addLayout(form);
+    layout->addLayout(btnRow);
+    setCentralWidget(central);
+    setWindowTitle("Library Manager (Qt)");
+
+    // Load persisted data
+    LibraryUtils::loadFromFile(dataPath, items);
+    model->setItems(items);
+
+    // Wiring
+    connect(searchEdit, &QLineEdit::textChanged, this, [this](const QString& s){
+        proxy->setFilterFixedString(s);
+    });
+    connect(typeCombo, &QComboBox::currentTextChanged, this, [this]{ toggleInputs(); });
+    toggleInputs();
+
+    connect(addBtn, &QPushButton::clicked, this, [this]{
+        const QString type = typeCombo->currentText();
+        const int id = idSpin->value();
+        for (auto* p : items) if (p->getId()==id) { QMessageBox::warning(this,"Error","ID exists."); return; }
+        const std::string title = titleEdit->text().toStdString();
+        const std::string author= authorEdit->text().toStdString();
+        if (type=="Book") {
+            items.append(new Book(title, author, id, false, genreEdit->text().toStdString()));
+        } else {
+            items.append(new Magazine(title, author, id, false, issueSpin->value()));
+        }
+        model->setItems(items);
+        refreshSave();
+        titleEdit->clear(); authorEdit->clear(); genreEdit->clear();
+    });
+
+    connect(borrowBtn, &QPushButton::clicked, this, [this]{
+        const auto idx = proxy->mapToSource(listView->currentIndex());
+        auto* p = model->at(idx.row());
+        if (!p) return;
+        if (p->getIsBorrowed()) { QMessageBox::information(this,"Info","Already borrowed."); return; }
+        p->setIsBorrowed(true); model->setItems(items); refreshSave();
+    });
+
+    connect(returnBtn, &QPushButton::clicked, this, [this]{
+        const auto idx = proxy->mapToSource(listView->currentIndex());
+        auto* p = model->at(idx.row());
+        if (!p) return;
+        if (!p->getIsBorrowed()) { QMessageBox::information(this,"Info","Not currently borrowed."); return; }
+        p->setIsBorrowed(false); model->setItems(items); refreshSave();
+    });
+}
+
+void MainWindow::toggleInputs() {
+    const bool isBook = (typeCombo->currentText()=="Book");
+    genreEdit->setEnabled(isBook);
+    issueSpin->setEnabled(!isBook);
+}
+
+void MainWindow::refreshSave() {
+    LibraryUtils::saveToFile(dataPath, items);
+}
+
+MainWindow::~MainWindow() {
+    LibraryUtils::saveToFile(dataPath, items);
+    qDeleteAll(items);
+}
+qt/app/main.cpp
+#include <QApplication>
+#include "MainWindow.h"
+
+int main(int argc, char *argv[]) {
+    QApplication a(argc, argv);
+    MainWindow w; w.resize(700, 520); w.show();
+    return a.exec();
+}
+libraryutils/
+qt/libraryutils/LibraryUtils.h
+#pragma once
+#include <QString>
+#include <QList>
+#include "app/LibraryItem.h"
+#include "app/Book.h"
+#include "app/Magazine.h"
+
+namespace LibraryUtils {
+    bool loadFromFile(const QString& path, QList<LibraryItem*>& out);
+    bool saveToFile(const QString& path, const QList<LibraryItem*>& in);
+}
+qt/libraryutils/LibraryUtils.cpp
+#include "LibraryUtils.h"
+#include <QFile>
+#include <QTextStream>
+
+static QString quote(const QString& s) {
+    QString t = s; t.replace("\"", "\"\"");
+    return "\"" + t + "\"";
+}
+
+bool LibraryUtils::loadFromFile(const QString& path, QList<LibraryItem*>& out) {
+    out.clear();
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly|QIODevice::Text)) return false;
+    QTextStream ts(&f);
+    while (!ts.atEnd()) {
+        const QString line = ts.readLine().trimmed();
+        if (line.isEmpty()) continue;
+        const auto cols = line.split(',', Qt::KeepEmptyParts);
+        if (cols.size()!=6) continue;
+
+        const QString type = cols[0];
+        auto uq = [](QString s){
+            if (s.startsWith('"') && s.endsWith('"')) {
+                s = s.mid(1, s.size()-2).replace("\"\"","\"");
+            }
+            return s;
+        };
+        const QString title  = uq(cols[1]);
+        const QString author = uq(cols[2]);
+        const int id         = cols[3].toInt();
+        const bool borrowed  = cols[4]=="true";
+
+        if (type=="Book") {
+            const QString genre = uq(cols[5]);
+            out.append(new Book(title.toStdString(), author.toStdString(), id, borrowed, genre.toStdString()));
+        } else if (type=="Magazine") {
+            const int issue = cols[5].toInt();
+            out.append(new Magazine(title.toStdString(), author.toStdString(), id, borrowed, issue));
+        }
+    }
+    return true;
+}
+
+bool LibraryUtils::saveToFile(const QString& path, const QList<LibraryItem*>& in) {
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly|QIODevice::Text)) return false;
+    QTextStream ts(&f);
+    for (auto* p : in) {
+        const QString t      = QString::fromStdString(p->type());
+        const QString title  = quote(QString::fromStdString(p->getTitle()));
+        const QString author = quote(QString::fromStdString(p->getAuthor()));
+        const QString id     = QString::number(p->getId());
+        const QString b      = p->getIsBorrowed() ? "true" : "false";
+
+        if (t=="Book") {
+            auto* bk = dynamic_cast<Book*>(p);
+            const QString g = quote(QString::fromStdString(bk->getGenre()));
+            ts << "Book," << title << "," << author << "," << id << "," << b << "," << g << "\n";
+        } else {
+            auto* mg = dynamic_cast<Magazine*>(p);
+            ts << "Magazine," << title << "," << author << "," << id << "," << b << "," << mg->getIssueNumber() << "\n";
+        }
+    }
+    return true;
+}
