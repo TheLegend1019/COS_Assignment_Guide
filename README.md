@@ -1627,13 +1627,14 @@ qt/app/ItemModel.h
 #pragma once
 #include <QAbstractListModel>
 #include <QList>
+#include <QVariant>
+
 #include "LibraryItem.h"
 
 class ItemModel : public QAbstractListModel {
     Q_OBJECT
 
     QList<LibraryItem*> m_items;
-
 public:
     explicit ItemModel(QObject* parent = 0);
 
@@ -1949,6 +1950,7 @@ qt/libraryutils/LibraryUtils.h
 #pragma once
 #include <QString>
 #include <QList>
+
 #include "app/LibraryItem.h"
 #include "app/Book.h"
 #include "app/Magazine.h"
@@ -2048,5 +2050,3 @@ bool LibraryUtils::saveToFile(const QString& path, const QList<LibraryItem*>& in
     }
     return true;
 }
-
-
